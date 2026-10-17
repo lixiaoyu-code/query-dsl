@@ -249,11 +249,6 @@ Performance benchmarks on MacBook (Python 3.14):
 | Deep nesting | ~16.79μs/query | 10-level nesting |
 | Wide OR (100 conditions) | ~0.10ms/query | 100 parallel conditions |
 
-**Performance Notes**:
-- Operator value validation adds approximately 0.3-0.4μs per query overhead (about +0.04ms for 100 conditions)
-- Uses classmethod optimization to avoid object instantiation overhead
-- Slightly slower than old version, but trades off for stricter value format validation
-
 ## Run Tests
 
 ```bash
@@ -287,19 +282,7 @@ query-dsl/
     └── README_EN.md       # English README
 ```
 
-## Design Principles
-
-### Bug Fix History
-
-**Bug #1**: Multiple logic operators coexisting, parser silently selects the first one
-- **Issue**: `{"and": [...], "or": [...]}` only `and` takes effect
-- **Fix**: Throw `ParseError` when multiple operators detected
-
-**Bug #2**: Operator value format not validated
-- **Issue**: `in` accepts non-list values, `between` accepts single values
-- **Fix**: Establish operator class system, each operator validates its own value format
-
-### Architecture Design
+## Architecture Design
 
 **Operator System** uses object-oriented design:
 - **Base class** `Operator`: Define unified interface

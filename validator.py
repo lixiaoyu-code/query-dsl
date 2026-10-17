@@ -1,32 +1,24 @@
 """验证器和扩展机制"""
 from typing import Set, Optional, Callable, Dict, Any
 from exceptions import UnsupportedOperatorError, InvalidFieldError
-
-
-# 默认支持的操作符
-DEFAULT_OPERATORS = {
-    'eq', 'ne', 'gt', 'gte', 'lt', 'lte',
-    'in', 'not_in', 'like', 'ilike',
-    'is_null', 'not_null', 'between'
-}
+from operators import OperatorRegistry
 
 
 class Validator:
     """验证器：支持字段和操作符校验"""
-    __slots__ = ('_allowed_fields', '_operators', '_field_validators')
+    __slots__ = ('_allowed_fields', '_field_validators')
 
     def __init__(
         self,
         allowed_fields: Optional[Set[str]] = None,
-        operators: Optional[Set[str]] = None
+        operators: Optional[Set[str]] = None  # 保留兼容性，但不再使用
     ):
         """
         Args:
             allowed_fields: 允许的字段白名单，None表示不限制
-            operators: 支持的操作符集合，默认使用DEFAULT_OPERATORS
+            operators: 已废弃，操作符通过 OperatorRegistry 自动管理
         """
         self._allowed_fields = allowed_fields
-        self._operators = operators or DEFAULT_OPERATORS.copy()
         self._field_validators: Dict[str, Callable[[Any], bool]] = {}
 
     def validate_field(self, field: str) -> None:
@@ -36,10 +28,24 @@ class Validator:
 
     def validate_operator(self, op: str) -> None:
         """验证操作符是否支持"""
-        if op not in self._operators:
+        if not OperatorRegistry.get(op):
+            available = sorted(OperatorRegistry.all_names())
             raise UnsupportedOperatorError(
-                f"Operator '{op}' not supported. Available: {sorted(self._operators)}"
+                f"Operator '{op}' not supported. Available: {available}"
             )
+
+    def validate_operator_value(self, op: str, value: Any) -> None:
+        """
+        验证操作符的值是否符合要求
+
+        Args:
+            op: 操作符名称
+            value: 待验证的值
+
+        Raises:
+            ValidationError: 值不符合操作符要求
+        """
+        OperatorRegistry.validate(op, value)
 
     def validate_value(self, field: str, value: Any) -> None:
         """验证字段值（可扩展）"""
@@ -49,8 +55,11 @@ class Validator:
                 raise ValueError(f"Invalid value for field '{field}': {value}")
 
     def register_operator(self, op: str) -> None:
-        """注册自定义操作符"""
-        self._operators.add(op)
+        """
+        已废弃：操作符通过 operators/ 目录自动注册
+        保留此方法仅为向后兼容
+        """
+        pass
 
     def register_field_validator(self, field: str, validator: Callable[[Any], bool]) -> None:
         """注册字段值验证器"""
@@ -59,4 +68,4 @@ class Validator:
     @property
     def operators(self) -> Set[str]:
         """获取所有支持的操作符"""
-        return self._operators.copy()
+        return OperatorRegistry.all_names()

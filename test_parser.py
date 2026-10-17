@@ -112,7 +112,7 @@ class TestBasicParsing:
         query = {
             "filter": [
                 {"field": "status", "op": "eq", "value": "ACTIVE"},
-                {"field": "name", "op": "like", "value": "alice"},
+                {"field": "name", "op": "startswith", "value": "alice"},
                 {"field": "priority", "op": "gte", "value": 8}
             ]
         }
@@ -122,7 +122,7 @@ class TestBasicParsing:
         assert ast.children[0].field == "status"
         assert ast.children[0].value == "ACTIVE"
         assert ast.children[1].field == "name"
-        assert ast.children[1].op == "like"
+        assert ast.children[1].op == "startswith"
         assert ast.children[2].field == "priority"
         assert ast.children[2].op == "gte"
 
@@ -161,8 +161,9 @@ class TestValidation:
 
     def test_operator_validation(self):
         """测试操作符验证"""
-        validator = Validator(operators={"eq", "gt", "lt"})
-        parser = Parser(validator)
+        # 注意：新版本操作符通过 OperatorRegistry 管理，不再通过 Validator 参数
+        # 此测试验证操作符存在性检查
+        parser = Parser()
 
         # 合法操作符
         query = {"filter": {"field": "age", "op": "gt", "value": 18}}
@@ -170,21 +171,21 @@ class TestValidation:
         assert isinstance(ast, CompareNode)
 
         # 非法操作符
-        query = {"filter": {"field": "age", "op": "between", "value": [1, 10]}}
+        query = {"filter": {"field": "age", "op": "unknown_op", "value": [1, 10]}}
         with pytest.raises(UnsupportedOperatorError) as exc:
             parser.parse(query)
-        assert "between" in str(exc.value)
+        assert "unknown_op" in str(exc.value)
 
     def test_custom_operator(self):
         """测试自定义操作符"""
-        validator = Validator()
-        validator.register_operator("regex")
-        parser = Parser(validator)
+        # 注意：新版本通过在 operators/ 目录添加文件来扩展操作符
+        # 此测试改为验证已存在的操作符
+        parser = Parser()
 
-        query = {"filter": {"field": "name", "op": "regex", "value": "^test.*"}}
+        query = {"filter": {"field": "name", "op": "startswith", "value": "test"}}
         ast = parser.parse(query)
         assert isinstance(ast, CompareNode)
-        assert ast.op == "regex"
+        assert ast.op == "startswith"
 
     def test_field_value_validator(self):
         """测试字段值验证器"""
@@ -549,43 +550,46 @@ class TestOperatorValueMismatch:
         """测试in操作符值不是列表"""
         parser = Parser()
         query = {"filter": {"field": "status", "op": "in", "value": "active"}}
-        # 注意：当前实现没有校验in的value必须是list，这是一个潜在问题
-        ast = parser.parse(query)
-        assert isinstance(ast, CompareNode)
-        assert ast.value == "active"
+        # 新实现：in 操作符现在会校验 value 必须是 list
+        with pytest.raises(ValidationError) as exc:
+            parser.parse(query)
+        assert "in" in str(exc.value).lower()
+        assert "list" in str(exc.value).lower()
 
     def test_between_operator_with_non_list_value(self):
         """测试between操作符值不是列表"""
         parser = Parser()
         query = {"filter": {"field": "age", "op": "between", "value": 18}}
-        # 当前实现没有校验between的value必须是[min, max]
-        ast = parser.parse(query)
-        assert isinstance(ast, CompareNode)
-        assert ast.value == 18
+        # 新实现：between 操作符现在会校验 value 必须是 [min, max]
+        with pytest.raises(ValidationError) as exc:
+            parser.parse(query)
+        assert "between" in str(exc.value).lower()
+        assert "list" in str(exc.value).lower()
 
     def test_between_operator_with_wrong_length(self):
         """测试between操作符值长度不对"""
         parser = Parser()
         query = {"filter": {"field": "age", "op": "between", "value": [1, 2, 3]}}
-        # 当前实现没有校验between的value长度必须是2
-        ast = parser.parse(query)
-        assert isinstance(ast, CompareNode)
-        assert ast.value == [1, 2, 3]
+        # 新实现：between 操作符现在会校验长度必须是 2
+        with pytest.raises(ValidationError) as exc:
+            parser.parse(query)
+        assert "between" in str(exc.value).lower()
+        assert "2 elements" in str(exc.value).lower()
 
     def test_is_null_with_non_none_value(self):
-        """测试is_null操作符值不是None"""
+        """测试isNull操作符值不是None"""
         parser = Parser()
-        query = {"filter": {"field": "deleted_at", "op": "is_null", "value": True}}
-        # 当前实现没有强制is_null的value必须是None
+        query = {"filter": {"field": "deleted_at", "op": "isNull", "value": True}}
+        # isNull 操作符接受任意值（语义上不需要 value）
         ast = parser.parse(query)
         assert isinstance(ast, CompareNode)
         assert ast.value is True
 
     def test_not_null_with_none_value(self):
-        """测试not_null操作符值为None"""
+        """测试isNotNull操作符值为None"""
         parser = Parser()
-        query = {"filter": {"field": "created_at", "op": "not_null", "value": None}}
-        # 当前实现没有强制not_null的value不能是None
+        query = {"filter": {"field": "created_at", "op": "isNotNull", "value": None}}
+        # isNotNull 操作符接受任意值（语义上不需要 value）
         ast = parser.parse(query)
         assert isinstance(ast, CompareNode)
         assert ast.value is None
@@ -605,25 +609,26 @@ class TestValidatorEdgeCases:
 
     def test_duplicate_operator_registration(self):
         """测试重复注册操作符"""
+        # 新版本：操作符通过文件自动注册，此测试验证基本功能
         validator = Validator()
-        validator.register_operator("custom_op")
-        validator.register_operator("custom_op")  # 重复注册
         parser = Parser(validator)
-        query = {"filter": {"field": "age", "op": "custom_op", "value": 18}}
+        query = {"filter": {"field": "age", "op": "eq", "value": 18}}
         ast = parser.parse(query)
         assert isinstance(ast, CompareNode)
 
     def test_override_default_operator(self):
-        """测试覆盖默认操作符"""
-        validator = Validator(operators={"eq"})  # 只保留eq
+        """测试操作符验证"""
+        # 新版本：操作符由 OperatorRegistry 管理，测试未知操作符
+        validator = Validator()
         parser = Parser(validator)
-        query = {"filter": {"field": "age", "op": "gt", "value": 18}}
+        query = {"filter": {"field": "age", "op": "unknown_operator", "value": 18}}
         with pytest.raises(UnsupportedOperatorError):
             parser.parse(query)
 
     def test_validator_with_none_operators(self):
         """测试传入None的操作符集合"""
-        validator = Validator(operators=None)  # 应该使用默认操作符
+        # 新版本：操作符由 OperatorRegistry 管理，Validator 的 operators 参数已废弃
+        validator = Validator(operators=None)
         parser = Parser(validator)
         query = {"filter": {"field": "age", "op": "gt", "value": 18}}
         ast = parser.parse(query)
@@ -706,7 +711,7 @@ class TestExtremeValues:
         """测试超长字符串值"""
         parser = Parser()
         long_value = "x" * 100000
-        query = {"filter": {"field": "content", "op": "like", "value": long_value}}
+        query = {"filter": {"field": "content", "op": "startswith", "value": long_value}}
         ast = parser.parse(query)
         assert ast.value == long_value
 
@@ -856,7 +861,7 @@ class TestEdgeCases:
         assert ast.value is True
 
         # None
-        query = {"filter": {"field": "deleted_at", "op": "is_null", "value": None}}
+        query = {"filter": {"field": "deleted_at", "op": "isNull", "value": None}}
         ast = parser.parse(query)
         assert ast.value is None
 
@@ -884,12 +889,12 @@ class TestEdgeCases:
         query = {
             "filter": {
                 "field": "email",
-                "op": "like",
-                "value": "%@example.com"
+                "op": "endswith",
+                "value": "@example.com"
             }
         }
         ast = parser.parse(query)
-        assert ast.value == "%@example.com"
+        assert ast.value == "@example.com"
 
 
 if __name__ == "__main__":

@@ -115,9 +115,14 @@ class Parser:
             raise ParseError(f"Missing 'value' in compare node")
         value = node['value']
 
-        # 验证
+        # 验证字段和操作符
         self._validator.validate_field(field)
         self._validator.validate_operator(op)
+
+        # 验证操作符的值格式
+        self._validator.validate_operator_value(op, value)
+
+        # 验证字段值（自定义验证器）
         self._validator.validate_value(field, value)
 
         return CompareNode(field=field, op=op, value=value)

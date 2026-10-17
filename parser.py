@@ -50,6 +50,14 @@ class Parser:
         if not isinstance(node, dict):
             raise ParseError(f"Node must be dict, got {type(node).__name__}")
 
+        # 检查是否有多个逻辑操作符并存
+        logic_operators = [op for op in ('and', 'or', 'not') if op in node]
+        if len(logic_operators) > 1:
+            raise ParseError(
+                f"Multiple logic operators in same node: {logic_operators}. "
+                f"Use nested structure instead."
+            )
+
         # 逻辑操作符
         if 'and' in node:
             return self._parse_and(node['and'])

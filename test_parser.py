@@ -425,9 +425,10 @@ class TestMixedLogicErrors:
                 "or": [{"field": "name", "op": "eq", "value": "tom"}]
             }
         }
-        # 实际行为：解析器会选择第一个匹配的操作符（and）
-        ast = parser.parse(query)
-        assert isinstance(ast, AndNode)
+        # 新行为：多个逻辑操作符并存时抛出错误
+        with pytest.raises(ParseError) as exc:
+            parser.parse(query)
+        assert "Multiple logic operators" in str(exc.value)
 
     def test_logic_and_field_mixed(self):
         """测试逻辑操作符和field同时存在"""

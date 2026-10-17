@@ -385,6 +385,453 @@ class TestPerformance:
         assert per_op < 10, f"性能不达标: {per_op:.2f}ms > 10ms"
 
 
+class TestNotNodeExceptions:
+    """NOT节点异常测试"""
+
+    def test_empty_not(self):
+        """测试空NOT（缺少子节点）"""
+        parser = Parser()
+        query = {"filter": {"not": {}}}
+        with pytest.raises(ParseError) as exc:
+            parser.parse(query)
+        assert "Unknown" in str(exc.value)
+
+    def test_not_with_invalid_type(self):
+        """测试NOT的值为非dict"""
+        parser = Parser()
+        query = {"filter": {"not": "invalid"}}
+        with pytest.raises(ParseError) as exc:
+            parser.parse(query)
+        assert "dict" in str(exc.value)
+
+    def test_not_with_list(self):
+        """测试NOT的值为list"""
+        parser = Parser()
+        query = {"filter": {"not": []}}
+        with pytest.raises(ParseError) as exc:
+            parser.parse(query)
+        assert "dict" in str(exc.value)
+
+
+class TestMixedLogicErrors:
+    """混合逻辑异常测试"""
+
+    def test_multiple_logic_operators(self):
+        """测试同时存在多个逻辑操作符"""
+        parser = Parser()
+        query = {
+            "filter": {
+                "and": [{"field": "age", "op": "gt", "value": 18}],
+                "or": [{"field": "name", "op": "eq", "value": "tom"}]
+            }
+        }
+        # 实际行为：解析器会选择第一个匹配的操作符（and）
+        ast = parser.parse(query)
+        assert isinstance(ast, AndNode)
+
+    def test_logic_and_field_mixed(self):
+        """测试逻辑操作符和field同时存在"""
+        parser = Parser()
+        query = {
+            "filter": {
+                "and": [{"field": "age", "op": "gt", "value": 18}],
+                "field": "name",
+                "op": "eq",
+                "value": "tom"
+            }
+        }
+        # 实际行为：解析器会选择第一个匹配的操作符（and）
+        ast = parser.parse(query)
+        assert isinstance(ast, AndNode)
+
+
+class TestCompareNodeMissingFields:
+    """比较节点字段缺失测试（补充完整）"""
+
+    def test_missing_field_only(self):
+        """测试只缺少field"""
+        parser = Parser()
+        query = {"filter": {"op": "eq", "value": 10}}
+        with pytest.raises(ParseError) as exc:
+            parser.parse(query)
+        assert "Unknown" in str(exc.value) or "field" in str(exc.value)
+
+    def test_missing_op_only(self):
+        """测试只缺少op"""
+        parser = Parser()
+        query = {"filter": {"field": "age", "value": 10}}
+        with pytest.raises(ParseError) as exc:
+            parser.parse(query)
+        assert "Unknown" in str(exc.value) or "op" in str(exc.value)
+
+    def test_missing_value_only(self):
+        """测试只缺少value"""
+        parser = Parser()
+        query = {"filter": {"field": "age", "op": "eq"}}
+        with pytest.raises(ParseError) as exc:
+            parser.parse(query)
+        assert "value" in str(exc.value)
+
+    def test_missing_field_and_op(self):
+        """测试同时缺少field和op"""
+        parser = Parser()
+        query = {"filter": {"value": 10}}
+        with pytest.raises(ParseError) as exc:
+            parser.parse(query)
+        assert "Unknown" in str(exc.value)
+
+    def test_missing_field_and_value(self):
+        """测试同时缺少field和value"""
+        parser = Parser()
+        query = {"filter": {"op": "eq"}}
+        with pytest.raises(ParseError) as exc:
+            parser.parse(query)
+        assert "Unknown" in str(exc.value)
+
+    def test_missing_op_and_value(self):
+        """测试同时缺少op和value"""
+        parser = Parser()
+        query = {"filter": {"field": "age"}}
+        with pytest.raises(ParseError) as exc:
+            parser.parse(query)
+        # 实际错误信息是 "'op' must be string, got NoneType"
+        assert "op" in str(exc.value) and ("string" in str(exc.value) or "Unknown" in str(exc.value))
+
+    def test_empty_compare_node(self):
+        """测试完全空的比较节点"""
+        parser = Parser()
+        query = {"filter": {}}
+        with pytest.raises(ParseError) as exc:
+            parser.parse(query)
+        assert "Unknown" in str(exc.value)
+
+
+class TestInvalidOperators:
+    """异常操作符测试"""
+
+    def test_unknown_operator(self):
+        """测试未知操作符"""
+        parser = Parser()
+        query = {"filter": {"field": "age", "op": "unknown_op", "value": 18}}
+        with pytest.raises(UnsupportedOperatorError) as exc:
+            parser.parse(query)
+        assert "unknown_op" in str(exc.value)
+
+    def test_empty_operator(self):
+        """测试空操作符"""
+        parser = Parser()
+        query = {"filter": {"field": "age", "op": "", "value": 18}}
+        with pytest.raises(UnsupportedOperatorError) as exc:
+            parser.parse(query)
+        assert "" in str(exc.value) or "not supported" in str(exc.value)
+
+    def test_sql_injection_like_operator(self):
+        """测试类SQL注入的操作符"""
+        parser = Parser()
+        query = {"filter": {"field": "age", "op": "'; DROP TABLE users--", "value": 18}}
+        with pytest.raises(UnsupportedOperatorError):
+            parser.parse(query)
+
+    def test_case_sensitive_operator(self):
+        """测试操作符大小写敏感"""
+        parser = Parser()
+        query = {"filter": {"field": "age", "op": "EQ", "value": 18}}
+        with pytest.raises(UnsupportedOperatorError) as exc:
+            parser.parse(query)
+        assert "EQ" in str(exc.value)
+
+
+class TestOperatorValueMismatch:
+    """操作符与值格式不匹配测试"""
+
+    def test_in_operator_with_non_list_value(self):
+        """测试in操作符值不是列表"""
+        parser = Parser()
+        query = {"filter": {"field": "status", "op": "in", "value": "active"}}
+        # 注意：当前实现没有校验in的value必须是list，这是一个潜在问题
+        ast = parser.parse(query)
+        assert isinstance(ast, CompareNode)
+        assert ast.value == "active"
+
+    def test_between_operator_with_non_list_value(self):
+        """测试between操作符值不是列表"""
+        parser = Parser()
+        query = {"filter": {"field": "age", "op": "between", "value": 18}}
+        # 当前实现没有校验between的value必须是[min, max]
+        ast = parser.parse(query)
+        assert isinstance(ast, CompareNode)
+        assert ast.value == 18
+
+    def test_between_operator_with_wrong_length(self):
+        """测试between操作符值长度不对"""
+        parser = Parser()
+        query = {"filter": {"field": "age", "op": "between", "value": [1, 2, 3]}}
+        # 当前实现没有校验between的value长度必须是2
+        ast = parser.parse(query)
+        assert isinstance(ast, CompareNode)
+        assert ast.value == [1, 2, 3]
+
+    def test_is_null_with_non_none_value(self):
+        """测试is_null操作符值不是None"""
+        parser = Parser()
+        query = {"filter": {"field": "deleted_at", "op": "is_null", "value": True}}
+        # 当前实现没有强制is_null的value必须是None
+        ast = parser.parse(query)
+        assert isinstance(ast, CompareNode)
+        assert ast.value is True
+
+    def test_not_null_with_none_value(self):
+        """测试not_null操作符值为None"""
+        parser = Parser()
+        query = {"filter": {"field": "created_at", "op": "not_null", "value": None}}
+        # 当前实现没有强制not_null的value不能是None
+        ast = parser.parse(query)
+        assert isinstance(ast, CompareNode)
+        assert ast.value is None
+
+
+class TestValidatorEdgeCases:
+    """Validator边界测试"""
+
+    def test_empty_allowed_fields(self):
+        """测试空白名单（禁止所有字段）"""
+        validator = Validator(allowed_fields=set())
+        parser = Parser(validator)
+        query = {"filter": {"field": "age", "op": "gt", "value": 18}}
+        with pytest.raises(InvalidFieldError) as exc:
+            parser.parse(query)
+        assert "age" in str(exc.value)
+
+    def test_duplicate_operator_registration(self):
+        """测试重复注册操作符"""
+        validator = Validator()
+        validator.register_operator("custom_op")
+        validator.register_operator("custom_op")  # 重复注册
+        parser = Parser(validator)
+        query = {"filter": {"field": "age", "op": "custom_op", "value": 18}}
+        ast = parser.parse(query)
+        assert isinstance(ast, CompareNode)
+
+    def test_override_default_operator(self):
+        """测试覆盖默认操作符"""
+        validator = Validator(operators={"eq"})  # 只保留eq
+        parser = Parser(validator)
+        query = {"filter": {"field": "age", "op": "gt", "value": 18}}
+        with pytest.raises(UnsupportedOperatorError):
+            parser.parse(query)
+
+    def test_validator_with_none_operators(self):
+        """测试传入None的操作符集合"""
+        validator = Validator(operators=None)  # 应该使用默认操作符
+        parser = Parser(validator)
+        query = {"filter": {"field": "age", "op": "gt", "value": 18}}
+        ast = parser.parse(query)
+        assert isinstance(ast, CompareNode)
+
+
+class TestFieldValidatorErrors:
+    """字段验证器异常测试"""
+
+    def test_field_validator_raises_exception(self):
+        """测试字段验证器抛出异常"""
+        validator = Validator()
+        def bad_validator(v):
+            raise RuntimeError("Validator failed")
+        validator.register_field_validator("age", bad_validator)
+        parser = Parser(validator)
+        query = {"filter": {"field": "age", "op": "gt", "value": 18}}
+        with pytest.raises(RuntimeError) as exc:
+            parser.parse(query)
+        assert "Validator failed" in str(exc.value)
+
+    def test_field_validator_returns_false(self):
+        """测试字段验证器返回False"""
+        validator = Validator()
+        validator.register_field_validator("age", lambda v: v > 0)
+        parser = Parser(validator)
+        query = {"filter": {"field": "age", "op": "gt", "value": -10}}
+        with pytest.raises(ValueError) as exc:
+            parser.parse(query)
+        assert "age" in str(exc.value)
+        assert "-10" in str(exc.value)
+
+    def test_multiple_field_validators(self):
+        """测试多个字段验证器"""
+        validator = Validator()
+        validator.register_field_validator("age", lambda v: 0 <= v <= 150)
+        validator.register_field_validator("score", lambda v: 0 <= v <= 100)
+        parser = Parser(validator)
+
+        # age超范围
+        query = {"filter": {"field": "age", "op": "gt", "value": 200}}
+        with pytest.raises(ValueError):
+            parser.parse(query)
+
+        # score超范围
+        query = {"filter": {"field": "score", "op": "gt", "value": 150}}
+        with pytest.raises(ValueError):
+            parser.parse(query)
+
+    def test_field_validator_in_nested_node(self):
+        """测试嵌套节点中的字段验证"""
+        validator = Validator()
+        validator.register_field_validator("age", lambda v: v > 0)
+        parser = Parser(validator)
+        query = {
+            "filter": {
+                "and": [
+                    {"field": "name", "op": "eq", "value": "tom"},
+                    {"field": "age", "op": "gt", "value": -10}  # 非法值
+                ]
+            }
+        }
+        with pytest.raises(ValueError) as exc:
+            parser.parse(query)
+        assert "age" in str(exc.value)
+
+
+class TestExtremeValues:
+    """极端值测试"""
+
+    def test_very_long_field_name(self):
+        """测试超长字段名"""
+        parser = Parser()
+        long_field = "a" * 10000
+        query = {"filter": {"field": long_field, "op": "eq", "value": 1}}
+        ast = parser.parse(query)
+        assert ast.field == long_field
+
+    def test_very_long_string_value(self):
+        """测试超长字符串值"""
+        parser = Parser()
+        long_value = "x" * 100000
+        query = {"filter": {"field": "content", "op": "like", "value": long_value}}
+        ast = parser.parse(query)
+        assert ast.value == long_value
+
+    def test_very_large_number_value(self):
+        """测试超大数值"""
+        parser = Parser()
+        large_num = 10 ** 100
+        query = {"filter": {"field": "big_num", "op": "gt", "value": large_num}}
+        ast = parser.parse(query)
+        assert ast.value == large_num
+
+    def test_deeply_nested_value(self):
+        """测试深层嵌套的值（字典）"""
+        parser = Parser()
+        nested_value = {"level1": {"level2": {"level3": {"level4": "deep"}}}}
+        query = {"filter": {"field": "meta", "op": "eq", "value": nested_value}}
+        ast = parser.parse(query)
+        assert ast.value == nested_value
+
+    def test_special_character_combinations(self):
+        """测试特殊字符组合"""
+        parser = Parser()
+        special_chars = "!@#$%^&*()_+-=[]{}|;':\",./<>?`~\n\t\r\\"
+        query = {"filter": {"field": "code", "op": "eq", "value": special_chars}}
+        ast = parser.parse(query)
+        assert ast.value == special_chars
+
+
+class TestNestedExceptions:
+    """嵌套异常传播测试"""
+
+    def test_invalid_field_in_deep_nesting(self):
+        """测试深层嵌套中的非法字段"""
+        validator = Validator(allowed_fields={"age", "name"})
+        parser = Parser(validator)
+        query = {
+            "filter": {
+                "or": [
+                    {
+                        "and": [
+                            {"field": "age", "op": "gt", "value": 18},
+                            {
+                                "not": {
+                                    "field": "email",  # 非法字段
+                                    "op": "eq",
+                                    "value": "test@example.com"
+                                }
+                            }
+                        ]
+                    },
+                    {"field": "name", "op": "eq", "value": "tom"}
+                ]
+            }
+        }
+        with pytest.raises(InvalidFieldError) as exc:
+            parser.parse(query)
+        assert "email" in str(exc.value)
+
+    def test_invalid_operator_in_deep_nesting(self):
+        """测试深层嵌套中的非法操作符"""
+        parser = Parser()
+        query = {
+            "filter": {
+                "and": [
+                    {
+                        "or": [
+                            {
+                                "not": {
+                                    "field": "status",
+                                    "op": "invalid_op",  # 非法操作符
+                                    "value": "active"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+        with pytest.raises(UnsupportedOperatorError) as exc:
+            parser.parse(query)
+        assert "invalid_op" in str(exc.value)
+
+    def test_missing_value_in_nested_or(self):
+        """测试嵌套OR中缺少value"""
+        parser = Parser()
+        query = {
+            "filter": {
+                "or": [
+                    {"field": "age", "op": "gt", "value": 18},
+                    {"field": "name", "op": "eq"}  # 缺少value
+                ]
+            }
+        }
+        with pytest.raises(ParseError) as exc:
+            parser.parse(query)
+        assert "value" in str(exc.value)
+
+
+class TestOrNodeInvalidTypes:
+    """OR节点非法类型测试（补充）"""
+
+    def test_or_with_string(self):
+        """测试OR的值为字符串"""
+        parser = Parser()
+        query = {"filter": {"or": "invalid"}}
+        with pytest.raises(ParseError) as exc:
+            parser.parse(query)
+        assert "list" in str(exc.value)
+
+    def test_or_with_dict(self):
+        """测试OR的值为字典"""
+        parser = Parser()
+        query = {"filter": {"or": {"field": "age", "op": "gt", "value": 18}}}
+        with pytest.raises(ParseError) as exc:
+            parser.parse(query)
+        assert "list" in str(exc.value)
+
+    def test_or_with_number(self):
+        """测试OR的值为数字"""
+        parser = Parser()
+        query = {"filter": {"or": 123}}
+        with pytest.raises(ParseError) as exc:
+            parser.parse(query)
+        assert "list" in str(exc.value)
+
+
 class TestEdgeCases:
     """边界情况测试"""
 

@@ -1,0 +1,15 @@
+.idea
+/*~
+*.backup
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.DS_Store
+.claude
